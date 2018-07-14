@@ -5,22 +5,28 @@ import torch
 import torch.nn.functional as F
 from torch.autograd import Variable
 
-from envs import create_atari_env
-from model import ActorCritic
+from network import ActorCriticFFNetwork
+from constants import ACTION_SIZE
+from scene_loader import THORDiscreteEnvironment as Environment
+import cv2
 
-
-def test(rank, args, shared_model, counter):
+def test(rank, scene_scope, task_scope, args, shared_model, counter):
     torch.manual_seed(args.seed + rank)
-
-    env = create_atari_env(args.env_name)
-    env.seed(args.seed + rank)
-
-    model = ActorCritic(env.observation_space.shape[0], env.action_space)
+    
+    env = Environment({
+        'scene_name': scene_scope,
+        'terminal_state_id': int(task_scope)
+        })
+    
+    model = ActorCriticFFNetwork(ACTION_SIZE)
 
     model.eval()
 
-    state = env.reset()
-    state = torch.from_numpy(state)
+    height, width, layers = env.observation.shape
+    video = cv2.VideoWriter('video/' + task_scope + '.mp4',-1,1,(width,height))
+
+    env.reset()
+    state = torch.from_numpy(env.s_t)
     reward_sum = 0
     done = True
 
@@ -29,23 +35,27 @@ def test(rank, args, shared_model, counter):
     # a quick hack to prevent the agent from stucking
     actions = deque(maxlen=100)
     episode_length = 0
-    while True:
+
+    img = cv2.cvtColor(env.observation, cv2.COLOR_BGR2RGB)
+    video.write(img)
+    for i in range(100):
         episode_length += 1
         # Sync with the shared model
         if done:
             model.load_state_dict(shared_model.state_dict())
-            cx = Variable(torch.zeros(1, 256), volatile=True)
-            hx = Variable(torch.zeros(1, 256), volatile=True)
-        else:
-            cx = Variable(cx.data, volatile=True)
-            hx = Variable(hx.data, volatile=True)
 
-        value, logit, (hx, cx) = model((Variable(
-            state.unsqueeze(0), volatile=True), (hx, cx)))
-        prob = F.softmax(logit)
+        logit, value = model(env.s_t, env.target)
+        prob = F.softmax(logit, dim=1)
         action = prob.max(1, keepdim=True)[1].data.numpy()
-
-        state, reward, done, _ = env.step(action[0, 0])
+        env.step(action[0, 0])
+        env.update()        
+        img = cv2.cvtColor(env.observation, cv2.COLOR_BGR2RGB)
+        video.write(img)
+        
+        reward = env.reward
+        state = env.s_t
+        done = env.terminal
+        print(env.terminal_state_id, env.current_state_id)
         done = done or episode_length >= args.max_episode_length
         reward_sum += reward
 
@@ -63,7 +73,10 @@ def test(rank, args, shared_model, counter):
             reward_sum = 0
             episode_length = 0
             actions.clear()
-            state = env.reset()
-            time.sleep(60)
+            env.reset()
+            state = env.s_t
+            break
 
         state = torch.from_numpy(state)
+    cv2.destroyAllWindows()
+    video.release()

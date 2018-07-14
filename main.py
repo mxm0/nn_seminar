@@ -80,8 +80,7 @@ if __name__ == '__main__':
 
     counter = mp.Value('i', 0)
     lock = mp.Lock()
-    
-    '''
+    ''' 
     p = mp.Process(target=test, args=(args.num_processes, args, shared_model, counter))
     p.start()
     processes.append(p)
@@ -98,19 +97,21 @@ if __name__ == '__main__':
                                 loc: storage)
         # set global step
         shared_model.load_state_dict(checkpoint)
-        print("Mode loaded")
+        print("Model loaded")
     else:
         print("Could not find old checkpoint")
-
+    
     for rank in range(0, args.num_processes):
         scene, task = branches[rank%NUM_TASKS]
-        p = mp.Process(target=train, args=(rank ,scene, task, args, shared_model, counter, lock, optimizer))
+        p = mp.Process(target=test, args=(rank ,scene, task, args, shared_model, counter))
+        #p = mp.Process(target=train, args=(rank ,scene, task, args, shared_model, counter, lock, optimizer))
         p.start()
         processes.append(p)
     
     for p in processes:
         p.join()
-    
+    '''
     print('Now saving data. Please wait.')
     torch.save(shared_model.state_dict(),
                 CHECKPOINT_DIR + '/' + 'checkpoint.pth.tar')
+    '''
